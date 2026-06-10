@@ -1,0 +1,82 @@
+run:
+  run_id: smoke
+  output_dir: runs/smoke
+  random_seed: 123
+  mode: smoke
+
+logging:
+  level: "INFO"
+
+data:
+  datasets: ["B3", "B4"]
+  local_root: "data_registry/smoke_dataset"
+  kaggle_dataset:
+  image_extensions: [".png"]
+  mask_keywords: ["mask"]
+  synthetic_smoke: true
+  smoke_root: "data_registry/smoke_dataset"
+  smoke_images_per_dataset: 16
+
+sticker:
+  target_radius_px: 100.0
+  reference_radius_inches: 1.0
+  min_success_rate: 0.90
+
+segmentation:
+  provider: "pvtv2_b2"
+  allow_fallback: true
+  use_provided_masks_as_fallback: true
+  overwrite_existing: false
+  require_pvtv2_inference: false
+  sanity_checks:
+    enabled: false
+  frozen_pvtv2:
+    model_name: "pvt_v2_b2"
+    pretrained: true
+    image_size: 128
+    device: "auto"
+    threshold_method: "otsu"
+    postprocess:
+      fill_holes: true
+      largest_component: true
+      min_area_px: 1
+
+keypoints:
+  provider: "mmpose"
+  config_path:
+  checkpoint_path:
+  device: "cpu"
+  allow_fallback: true
+  overwrite_existing: false
+
+depth:
+  provider: "depth_pro"
+  device: "cpu"
+  allow_fallback: true
+  log_every: 25
+  overwrite_existing: false
+
+pointcloud:
+  downsample_fraction: 0.02
+  log_every: 100
+  overwrite_existing: false
+  require_depth_pro: false
+
+features:
+  nmi_threshold: 0.0
+  schema_version: "paper_84_v1"
+  fail_on_all_missing: true
+  log_every: 100
+
+model:
+  lasso_alphas: [0.001, 0.01, 0.1, 1.0, 10.0]
+  cv_folds: 3
+  test_size: 0.25
+
+reports:
+  paper_b3_count: 2588
+  paper_b4_count: 1934
+  paper_b3_min_weight_kg: 36
+  paper_b3_max_weight_kg: 621
+  paper_b4_min_weight_kg: 69
+  paper_b4_max_weight_kg: 307

@@ -1,0 +1,94 @@
+run:
+  run_id: default
+  output_dir: .
+  random_seed: 2026
+  mode: full
+
+logging:
+  level: "INFO"
+
+data:
+  datasets: ["B3", "B4"]
+  local_root:
+  kaggle_dataset: "sadhliroomyprime/cattle-weight-detection-model-dataset-12k"
+  image_extensions: [".jpg", ".jpeg", ".png", ".bmp"]
+  mask_keywords: ["mask", "annotation", "segmentation", "label"]
+  synthetic_smoke: false
+  smoke_root: "data_registry/smoke_dataset"
+
+sticker:
+  target_radius_px: 100.0
+  reference_radius_inches: 1.0
+  min_success_rate: 0.98
+  normalized_image_extension: ".jpg"
+  checkpoint_every: 100
+  max_output_pixels: 150000000
+
+segmentation:
+  provider: "pvtv2_b2"
+  allow_fallback: false
+  use_provided_masks_as_fallback: false
+  overwrite_existing: true
+  require_pvtv2_inference: true
+  checkpoint_every: 100
+  sanity_checks:
+    enabled: true
+    min_area_fraction: 0.005
+    max_area_fraction: 0.98
+    min_median_area_fraction: 0.02
+    max_median_area_fraction: 0.85
+  frozen_pvtv2:
+    model_name: "pvt_v2_b2"
+    pretrained: true
+    image_size: 384
+    device: "auto"
+    threshold_method: "otsu"
+    fixed_threshold: 0.5
+    threshold_percentile: 60.0
+    postprocess:
+      fill_holes: true
+      largest_component: true
+      min_area_px: 1
+
+keypoints:
+  provider: "mmpose"
+  config_path:
+  checkpoint_path:
+  device: "cpu"
+  checkpoint_every: 100
+  allow_fallback: false
+  overwrite_existing: true
+
+depth:
+  provider: "depth_pro"
+  device: "cpu"
+  allow_fallback: false
+  output_max_side: 0
+  log_every: 25
+  overwrite_existing: true
+
+pointcloud:
+  downsample_fraction: 0.02
+  checkpoint_every: 100
+  log_every: 100
+  overwrite_existing: true
+  require_depth_pro: true
+
+features:
+  nmi_threshold: 0.0
+  schema_version: "paper_84_v1"
+  fail_on_all_missing: true
+  log_every: 100
+
+model:
+  lasso_alphas: [0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0]
+  cv_folds: 5
+  test_size: 0.2
+
+reports:
+  paper_b3_count: 2588
+  paper_b4_count: 1934
+  paper_b3_min_weight_kg: 36
+  paper_b3_max_weight_kg: 621
+  paper_b4_min_weight_kg: 69
+  paper_b4_max_weight_kg: 307
