@@ -19,7 +19,7 @@ from cattle_weight.cv.pvtv2 import (
     predict_pvtv2_b2_masks,
 )
 from cattle_weight.cv.sticker import safe_stem
-from cattle_weight.io import artifacts_dir, read_parquet, registry_dir, reports_dir, write_parquet
+from cattle_weight.io import artifacts_dir, read_parquet, registry_dir, reports_dir, write_json, write_parquet
 from cattle_weight.progress import ProgressLogger, logger
 
 

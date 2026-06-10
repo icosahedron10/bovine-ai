@@ -8,6 +8,10 @@ import pandas as pd
 from cattle_weight.io import read_parquet, registry_dir, reports_dir
 
 
+def path_exists(value: Any) -> bool:
+    return bool(pd.notna(value) and value and Path(str(value)).exists())
+
+
 def write_depth_completion_summary(config: dict[str, Any]) -> pd.DataFrame:
     depth = read_parquet(registry_dir(config) / "depth_metadata.parquet")
     cv_path = registry_dir(config) / "cv_artifacts.parquet"
@@ -28,9 +32,9 @@ def write_depth_completion_summary(config: dict[str, Any]) -> pd.DataFrame:
         raise RuntimeError(f"depth_metadata.parquet is missing required columns: {missing}")
 
     audited = depth.copy()
-    audited["depth_map_exists"] = audited["depth_map_path"].map(lambda value: bool(value) and Path(str(value)).exists())
+    audited["depth_map_exists"] = audited["depth_map_path"].map(path_exists)
     audited["mask_exists"] = audited.get("mask_path", pd.Series([None] * len(audited))).map(
-        lambda value: bool(value) and Path(str(value)).exists()
+        path_exists
     )
     group_cols = [
         col

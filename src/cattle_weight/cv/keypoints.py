@@ -23,11 +23,11 @@ def validate_keypoints(keypoints: np.ndarray) -> None:
         raise ValueError(f"AnimalPose keypoints must have shape (20, 3), got {keypoints.shape}")
 
 
-def assert_pvtv2_keypoint_inputs(artifacts: pd.DataFrame) -> None:
+def assert_pvtv2_keypoint_inputs(artifacts: pd.DataFrame, config: dict[str, Any] | None = None) -> None:
     success = artifacts[artifacts["segmentation_status"] == "success"]
     if success.empty:
         raise RuntimeError("Keypoint inference requires successful PVTv2 segmentation rows.")
-    expected_source = required_pvtv2_segmentation_source()
+    expected_source = required_pvtv2_segmentation_source(config)
     invalid_sources = sorted(set(success.loc[success["segmentation_source"] != expected_source, "segmentation_source"].astype(str)))
     if invalid_sources:
         raise RuntimeError(f"Keypoint inference requires frozen PVTv2-B2 saliency masks; found sources={invalid_sources}.")
@@ -74,7 +74,7 @@ def run_keypoints(config: dict[str, Any]) -> pd.DataFrame:
     )
     require_pvtv2 = should_require_pvtv2_inference(config)
     if require_pvtv2:
-        assert_pvtv2_keypoint_inputs(artifacts)
+        assert_pvtv2_keypoint_inputs(artifacts, config)
     kp_cfg = config.get("keypoints", {})
     metadata_path = registry_dir(config) / "keypoint_metadata.parquet"
     current_image_ids = set(artifacts["image_id"].astype(str))

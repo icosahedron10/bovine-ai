@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -98,7 +99,7 @@ def download_kaggle_dataset(dataset_ref: str, destination: Path, datasets: list[
             if requested:
                 extract_requested_dataset_members(handle, destination, requested)
             else:
-                handle.extractall(destination)
+                extract_archive_members_safely(handle, destination, handle.infolist())
     return destination
 
 
@@ -126,7 +127,27 @@ def extract_requested_dataset_members(handle: zipfile.ZipFile, destination: Path
             f"Kaggle archive did not contain requested dataset folders: {sorted(normalized)}"
         )
     for member in members:
-        handle.extract(member, destination)
+        extract_archive_member_safely(handle, destination, member)
+
+
+def extract_archive_members_safely(handle: zipfile.ZipFile, destination: Path, members: list[zipfile.ZipInfo]) -> None:
+    for member in members:
+        extract_archive_member_safely(handle, destination, member)
+
+
+def extract_archive_member_safely(handle: zipfile.ZipFile, destination: Path, member: zipfile.ZipInfo) -> None:
+    destination_root = destination.resolve()
+    target_path = (destination_root / member.filename).resolve()
+    try:
+        target_path.relative_to(destination_root)
+    except ValueError as exc:
+        raise RuntimeError(f"Refusing to extract archive member outside destination: {member.filename}") from exc
+    if member.is_dir():
+        target_path.mkdir(parents=True, exist_ok=True)
+        return
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with handle.open(member) as source, target_path.open("wb") as target:
+        shutil.copyfileobj(source, target)
 
 
 def archive_member_matches_dataset(member_name: str, normalized_datasets: set[str]) -> bool:

@@ -16,7 +16,8 @@ def require_pose_torch() -> tuple[Any, Any, Any]:
         import torch.nn as nn
         import torchvision
     except ImportError as exc:
-        raise RuntimeError(f"Direct AnimalPose inference requires torch and torchvision. Missing: {exc.name}") from exc
+        missing = getattr(exc, "name", None) or str(exc)
+        raise RuntimeError(f"Direct AnimalPose inference requires torch and torchvision. Missing: {missing}") from exc
     return torch, nn, torchvision
 
 

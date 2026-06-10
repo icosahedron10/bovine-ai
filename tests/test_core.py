@@ -8,7 +8,8 @@ from PIL import Image, ImageDraw
 import pytest
 
 from cattle_weight.config import apply_cli_overrides, load_config
-from cattle_weight.cv.keypoints import DIRECT_ANIMALPOSE_PROVIDER, write_keypoint_review_overlays
+from cattle_weight.cv.animalpose_direct import require_pose_torch
+from cattle_weight.cv.keypoints import DIRECT_ANIMALPOSE_PROVIDER, assert_pvtv2_keypoint_inputs, write_keypoint_review_overlays
 from cattle_weight.cv.pointcloud import (
     assert_pvtv2_pointcloud_inputs,
     cleanup_point_cloud,
@@ -16,7 +17,7 @@ from cattle_weight.cv.pointcloud import (
     is_trusted_pointcloud_resume_row,
 )
 from cattle_weight.cv.pvtv2 import PVT_SEGMENTATION_SOURCE, mask_from_saliency, postprocess_saliency_mask
-from cattle_weight.cv.segmentation import bbox_from_mask, contour_from_mask
+from cattle_weight.cv.segmentation import bbox_from_mask, contour_from_mask, run_mask_freeze
 from cattle_weight.cv.segmentation import run_segmentation, select_mask_review_rows, validate_segmentation_masks
 from cattle_weight.cv.sticker import detect_sticker, normalize_image_and_mask
 from cattle_weight.data.indexing import (
@@ -46,6 +47,7 @@ from cattle_weight.io import read_json, registry_dir, reports_dir, write_json, w
 from cattle_weight.maintenance import clean_generated
 from cattle_weight.models.training import assert_headline_reproduction_ready, fit_nmi_selector, write_coverage_funnel, write_evaluation_headline_status
 from cattle_weight.pipeline import run_reproduction_smoke
+from cattle_weight.reports.depth import write_depth_completion_summary
 from cattle_weight.validation import validate_headline
 
 
@@ -221,6 +223,17 @@ def test_kaggle_extraction_keeps_only_requested_dataset_dirs(tmp_path: Path) -> 
     assert not (tmp_path / "root" / "Vector" / "B3" / "Side" / "data" / "1.json").exists()
 
 
+def test_kaggle_extraction_rejects_path_traversal(tmp_path: Path) -> None:
+    destination = tmp_path / "extract"
+    archive_path = tmp_path / "dataset.zip"
+    with zipfile.ZipFile(archive_path, "w") as handle:
+        handle.writestr("root/Pixel/B3/../../../../escape.txt", "bad")
+    with zipfile.ZipFile(archive_path) as handle:
+        with pytest.raises(RuntimeError, match="outside destination"):
+            extract_requested_dataset_members(handle, destination, ["B3"])
+    assert not (tmp_path / "escape.txt").exists()
+
+
 def test_dataset_root_resolution_prefers_pixel_over_vector(tmp_path: Path) -> None:
     pixel = tmp_path / "dataset" / "Pixel"
     vector = tmp_path / "dataset" / "Vector"
@@ -284,6 +297,43 @@ def test_depth_resume_accepts_only_trusted_depth_pro_rows(tmp_path: Path) -> Non
     assert is_trusted_depth_resume_row(row, cfg, {"B3:cow.jpg"}, "depth_pro")
     assert not is_trusted_depth_resume_row({**row, "depth_provider": "fallback_dummy_relative_depth"}, cfg, {"B3:cow.jpg"}, "depth_pro")
     assert not is_trusted_depth_resume_row({**row, "config_hash": "stale"}, cfg, {"B3:cow.jpg"}, "depth_pro")
+
+
+def test_depth_completion_summary_ignores_nan_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = smoke_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "nan").write_text("not an artifact", encoding="utf-8")
+    write_parquet(
+        pd.DataFrame(
+            [
+                {
+                    "image_id": "B3:cow.jpg",
+                    "dataset": "B3",
+                    "depth_provider": "depth_pro",
+                    "depth_status": "success",
+                    "depth_map_path": np.nan,
+                }
+            ]
+        ),
+        registry_dir(cfg) / "depth_metadata.parquet",
+    )
+    write_parquet(
+        pd.DataFrame(
+            [
+                {
+                    "image_id": "B3:cow.jpg",
+                    "segmentation_source": PVT_SEGMENTATION_SOURCE,
+                    "segmentation_status": "success",
+                    "mask_path": np.nan,
+                    "mask_area_px": 1,
+                }
+            ]
+        ),
+        registry_dir(cfg) / "cv_artifacts.parquet",
+    )
+    summary = write_depth_completion_summary(cfg)
+    assert int(summary["depth_map_exists"].iloc[0]) == 0
+    assert int(summary["mask_exists"].iloc[0]) == 0
 
 
 def test_pointcloud_resume_requires_trusted_upstream_and_file(tmp_path: Path) -> None:
@@ -361,6 +411,21 @@ def test_direct_animalpose_schema_and_overlay_generation(tmp_path: Path) -> None
     assert len(payload["keypoints"]) == 20
     assert not manifest.empty
     assert Path(manifest["overlay_path"].iloc[0]).exists()
+
+
+def test_require_pose_torch_reports_importerror_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "torch":
+            raise ImportError("torch import failed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(RuntimeError, match="torch import failed"):
+        require_pose_torch()
 
 
 def test_filename_weight_parsing() -> None:
@@ -599,6 +664,18 @@ def test_pointcloud_gate_requires_frozen_pvtv2_source() -> None:
         assert_pvtv2_pointcloud_inputs(invalid)
 
 
+def test_keypoint_gate_passes_config_to_expected_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    artifacts = pd.DataFrame([{"segmentation_status": "success", "segmentation_source": "configured_source"}])
+
+    def fake_required_source(config: dict | None = None) -> str:
+        if config is None:
+            raise AssertionError("config was not passed")
+        return "configured_source"
+
+    monkeypatch.setattr("cattle_weight.cv.keypoints.required_pvtv2_segmentation_source", fake_required_source)
+    assert_pvtv2_keypoint_inputs(artifacts, {"segmentation": {}})
+
+
 def test_headline_readiness_accepts_frozen_pvtv2_without_training_report(tmp_path: Path) -> None:
     cfg = smoke_config(tmp_path)
     cfg["segmentation"]["allow_fallback"] = False
@@ -719,6 +796,33 @@ def test_mask_review_selection_is_deterministic(tmp_path: Path) -> None:
         selected_a[["review_category", "selection_rank", "image_id"]],
         selected_b[["review_category", "selection_rank", "image_id"]],
     )
+
+
+def test_run_mask_freeze_writes_manifest(tmp_path: Path) -> None:
+    cfg = smoke_config(tmp_path)
+    mask_path = tmp_path / "mask.png"
+    Image.new("L", (8, 6), 255).save(mask_path)
+    write_parquet(
+        pd.DataFrame(
+            [
+                {
+                    "image_id": "B3:cow.jpg",
+                    "dataset": "B3",
+                    "segmentation_status": "success",
+                    "segmentation_source": PVT_SEGMENTATION_SOURCE,
+                    "mask_path": str(mask_path),
+                }
+            ]
+        ),
+        registry_dir(cfg) / "cv_artifacts.parquet",
+    )
+    review_dir = reports_dir(cfg) / "mask_review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"image_id": "B3:cow.jpg"}]).to_csv(review_dir / "mask_review_manifest.csv", index=False)
+    manifest = run_mask_freeze(cfg)
+    assert manifest["status"] == "frozen"
+    assert manifest["mask_count"] == 1
+    assert (review_dir / "frozen_mask_manifest.json").exists()
 
 
 def test_sticker_detection_and_normalization(tmp_path: Path) -> None:
