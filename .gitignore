@@ -1,0 +1,33 @@
+# Python cache and build output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment files
+.env
+.env.*
+
+# Notebooks and benchmark caches
+.ipynb_checkpoints/
+.benchmarks/
+
+# Generated experiment artifacts and model outputs
+/artifacts/
+/checkpoints/
+/data_registry/
+/models/
+/reports/
+/runs/

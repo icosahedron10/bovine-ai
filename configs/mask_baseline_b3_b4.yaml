@@ -1,0 +1,82 @@
+run:
+  run_id: mask_baseline_phase1
+  output_dir: runs/mask_baseline_phase1
+  random_seed: 2026
+  mode: mask_baseline
+
+logging:
+  level: "INFO"
+
+data:
+  datasets: ["B3", "B4"]
+  local_root: "data_registry/kaggle_download/www.acmeai.tech Dataset - BMGF-LivestockWeight-CV/Pixel"
+  kaggle_dataset: "sadhliroomyprime/cattle-weight-detection-model-dataset-12k"
+  image_extensions: [".jpg", ".jpeg", ".png", ".bmp"]
+  mask_keywords: ["mask", "annotation", "segmentation", "label"]
+  synthetic_smoke: false
+  sample_per_dataset: 50
+
+sticker:
+  target_radius_px: 100.0
+  reference_radius_inches: 1.0
+  min_success_rate: 0.98
+  normalized_image_extension: ".jpg"
+  checkpoint_every: 25
+  max_output_pixels: 150000000
+
+segmentation:
+  provider: "provided_mask_baseline"
+  allow_fallback: false
+  use_provided_masks_as_fallback: false
+  overwrite_existing: true
+  require_pvtv2_inference: false
+  checkpoint_every: 25
+  sanity_checks:
+    enabled: true
+    min_area_fraction: 0.005
+    max_area_fraction: 0.98
+    min_median_area_fraction: 0.02
+    max_median_area_fraction: 0.85
+  review:
+    random_count: 10
+    area_anomaly_count: 10
+    complexity_count: 10
+    max_overlay_side: 1600
+    complexity_max_side: 768
+
+keypoints:
+  provider: "mmpose"
+  config_path: "mmpose://animalpose/resnet50"
+  checkpoint_path: "models/mmpose/res50_animalpose_256x256-e1f30bff_20210426.pth"
+  device: "cuda"
+  force_direct_checkpoint: true
+  use_raw_image_for_inference: true
+  batch_size: 32
+  allow_fallback: false
+  overwrite_existing: true
+
+depth:
+  provider: "depth_pro"
+  checkpoint_path: "checkpoints/depth_pro.pt"
+  device: "cuda"
+  use_raw_image_for_inference: true
+  input_max_side: 512
+  output_max_side: 512
+  fallback_max_side: 512
+  checkpoint_every: 25
+  log_every: 1
+  allow_fallback: false
+  overwrite_existing: true
+
+pointcloud:
+  downsample_fraction: 0.02
+  checkpoint_every: 25
+  log_every: 25
+  overwrite_existing: true
+  require_depth_pro: true
+
+features:
+  nmi_threshold: 0.0
+  schema_version: "paper_84_v1"
+  fail_on_all_missing: true
+  log_every: 25
