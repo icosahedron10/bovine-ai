@@ -13,6 +13,7 @@ from PIL import Image
 from scipy import ndimage
 from scipy.spatial import ConvexHull, QhullError
 
+from cattle_weight.artifact_trust import row_is_reusable_by_stable_input
 from cattle_weight.cv.segmentation import (
     bbox_from_mask,
     contour_from_mask,
@@ -210,7 +211,7 @@ def assert_feature_inputs_ready(
         invalid_sources = sorted(set(cv_success.loc[cv_success["segmentation_source"] != expected_source, "segmentation_source"].astype(str)))
         if invalid_sources:
             raise RuntimeError(f"Feature extraction requires frozen PVTv2-B2 saliency masks; found sources={invalid_sources}.")
-    invalid_seg_hash = sorted(set(cv_success.loc[cv_success["config_hash"] != config_hash, "config_hash"].astype(str)))
+    invalid_seg_hash = stale_config_hashes(cv_success, config_hash)
     if invalid_seg_hash:
         raise RuntimeError(f"Feature extraction requires current-config segmentation artifacts; found config_hash={invalid_seg_hash}.")
 
@@ -221,7 +222,7 @@ def assert_feature_inputs_ready(
         invalid_depth = sorted(set(depth_success.loc[depth_success["depth_provider"] != "depth_pro", "depth_provider"].astype(str)))
         if invalid_depth:
             raise RuntimeError(f"Feature extraction requires depth_provider=depth_pro; found providers={invalid_depth}.")
-    invalid_depth_hash = sorted(set(depth_success.loc[depth_success["config_hash"] != config_hash, "config_hash"].astype(str)))
+    invalid_depth_hash = stale_config_hashes(depth_success, config_hash)
     if invalid_depth_hash:
         raise RuntimeError(f"Feature extraction requires current-config depth artifacts; found config_hash={invalid_depth_hash}.")
 
@@ -231,12 +232,23 @@ def assert_feature_inputs_ready(
         raise RuntimeError("Feature extraction requires successful keypoint rows.")
     if pointcloud_success.empty:
         raise RuntimeError("Feature extraction requires successful point-cloud rows.")
-    invalid_keypoint_hash = sorted(set(keypoint_success.loc[keypoint_success["config_hash"] != config_hash, "config_hash"].astype(str)))
+    invalid_keypoint_hash = stale_config_hashes(keypoint_success, config_hash)
     if invalid_keypoint_hash:
         raise RuntimeError(f"Feature extraction requires current-config keypoint artifacts; found config_hash={invalid_keypoint_hash}.")
-    invalid_pointcloud_hash = sorted(set(pointcloud_success.loc[pointcloud_success["config_hash"] != config_hash, "config_hash"].astype(str)))
+    invalid_pointcloud_hash = stale_config_hashes(pointcloud_success, config_hash)
     if invalid_pointcloud_hash:
         raise RuntimeError(f"Feature extraction requires current-config point-cloud artifacts; found config_hash={invalid_pointcloud_hash}.")
+
+
+def stale_config_hashes(frame: pd.DataFrame, current_hash: str | None) -> list[str]:
+    stale_hashes = []
+    for _, row in frame.iterrows():
+        if row.get("config_hash") == current_hash:
+            continue
+        if row_is_reusable_by_stable_input(row):
+            continue
+        stale_hashes.append(str(row.get("config_hash")))
+    return sorted(set(stale_hashes))
 
 
 def write_schema(config: dict[str, Any]) -> None:
@@ -411,6 +423,7 @@ def hull_area_perimeter(points: np.ndarray) -> tuple[float, float]:
         hull = ConvexHull(points[:, :2])
     except QhullError:
         return (np.nan, np.nan)
+    # scipy 2D ConvexHull: volume is enclosed area, area is perimeter.
     return float(hull.volume), float(hull.area)
 
 

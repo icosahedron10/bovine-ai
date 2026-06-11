@@ -293,7 +293,10 @@ def assert_headline_reproduction_ready(config: dict[str, Any]) -> None:
 def write_coverage_funnel(config: dict[str, Any]) -> pd.DataFrame:
     index = read_parquet(registry_dir(config) / "dataset_index.parquet")
     splits = read_parquet(registry_dir(config) / "splits.parquet")
-    sticker = read_parquet(registry_dir(config) / "sticker_metadata.parquet")
+    sticker_path = registry_dir(config) / "sticker_metadata.parquet"
+    if not sticker_path.exists():
+        raise RuntimeError(f"Coverage funnel requires sticker metadata at {sticker_path}. Run `cw stickers normalize` before `cw evaluate`.")
+    sticker = read_parquet(sticker_path)
     cv = read_parquet(registry_dir(config) / "cv_artifacts.parquet")
     keypoints = read_parquet(registry_dir(config) / "keypoint_metadata.parquet")
     depth = read_parquet(registry_dir(config) / "depth_metadata.parquet")

@@ -626,6 +626,17 @@ def test_feature_gate_allows_baseline_but_keeps_downstream_checks(tmp_path: Path
     stale_depth.loc[0, "config_hash"] = "stale"
     with pytest.raises(RuntimeError, match="current-config depth artifacts"):
         assert_feature_inputs_ready(cfg, cv, keypoints, stale_depth, pointcloud)
+    for artifact_name in ["cv", "keypoints", "depth", "pointcloud"]:
+        frames = {
+            "cv": cv.copy(),
+            "keypoints": keypoints.copy(),
+            "depth": depth.copy(),
+            "pointcloud": pointcloud.copy(),
+        }
+        frames[artifact_name].loc[0, "config_hash"] = "stale"
+        frames[artifact_name].loc[0, "reusable_by_stable_input_config"] = True
+        frames[artifact_name].loc[0, "stable_input_config_hash"] = "stable-input-v1"
+        assert_feature_inputs_ready(cfg, frames["cv"], frames["keypoints"], frames["depth"], frames["pointcloud"])
 
 
 def test_feature_gate_requires_frozen_pvtv2_for_headline(tmp_path: Path) -> None:
@@ -738,6 +749,18 @@ def test_coverage_funnel_counts_frozen_pvtv2_masks(tmp_path: Path) -> None:
     b3 = funnel[funnel["dataset"] == "B3"].iloc[0]
     assert b3["pvtv2_mask"] == 1
     assert b3["features"] == 1
+
+
+def test_coverage_funnel_reports_missing_sticker_metadata(tmp_path: Path) -> None:
+    cfg = smoke_config(tmp_path)
+    image_id = "B3:cow_001.jpg"
+    write_parquet(
+        pd.DataFrame([{"image_id": image_id, "dataset": "B3", "weight_kg": 100, "data_version": "data-v1"}]),
+        registry_dir(cfg) / "dataset_index.parquet",
+    )
+    write_parquet(pd.DataFrame([{"image_id": image_id, "dataset": "B3", "split": "train"}]), registry_dir(cfg) / "splits.parquet")
+    with pytest.raises(RuntimeError, match="Coverage funnel requires sticker metadata"):
+        write_coverage_funnel(cfg)
 
 
 def test_mask_review_selection_is_deterministic(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 
+from cattle_weight.artifact_trust import row_is_reusable_by_stable_input
 from cattle_weight.cv.pvtv2 import PVT_SEGMENTATION_SOURCE
 from cattle_weight.io import read_parquet, registry_dir
 from cattle_weight.reports.status import write_headline_reproduction_status
@@ -180,12 +181,6 @@ def stale_success_rows(config: dict[str, Any], success: pd.DataFrame) -> list[di
             continue
         stale_rows.append({"image_id": str(row.get("image_id")), "config_hash": row.get("config_hash")})
     return stale_rows
-
-
-def row_is_reusable_by_stable_input(row: pd.Series | dict[str, Any]) -> bool:
-    marker = row.get("reusable_by_stable_input_config", False)
-    stable_hash = row.get("stable_input_config_hash")
-    return bool(marker) and stable_hash not in {None, "", "nan"}
 
 
 def artifact_path_column(artifact_name: str) -> str | None:
