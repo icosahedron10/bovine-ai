@@ -16,8 +16,18 @@ from cattle_weight.cv.pointcloud import (
     depth_to_point_cloud,
     is_trusted_pointcloud_resume_row,
 )
-from cattle_weight.cv.pvtv2 import PVT_SEGMENTATION_SOURCE, mask_from_saliency, postprocess_saliency_mask
-from cattle_weight.cv.segmentation import bbox_from_mask, contour_from_mask, run_mask_freeze
+from cattle_weight.cv.pvtv2 import (
+    PVT_SEGMENTATION_ALGORITHM_VERSION,
+    PVT_SEGMENTATION_SOURCE,
+    mask_from_saliency,
+    postprocess_saliency_mask,
+)
+from cattle_weight.cv.segmentation import (
+    bbox_from_mask,
+    contour_from_mask,
+    is_trusted_segmentation_resume_row,
+    run_mask_freeze,
+)
 from cattle_weight.cv.segmentation import run_segmentation, select_mask_review_rows, validate_segmentation_masks
 from cattle_weight.cv.sticker import detect_sticker, normalize_image_and_mask
 from cattle_weight.data.indexing import (
@@ -45,7 +55,13 @@ from cattle_weight.features.extraction import (
 from cattle_weight.features.schema import PAPER_FEATURES
 from cattle_weight.io import read_json, registry_dir, reports_dir, write_json, write_parquet
 from cattle_weight.maintenance import clean_generated
-from cattle_weight.models.training import assert_headline_reproduction_ready, fit_nmi_selector, write_coverage_funnel, write_evaluation_headline_status
+from cattle_weight.models.training import (
+    assert_headline_reproduction_ready,
+    fit_nmi_selector,
+    training_split_version,
+    write_coverage_funnel,
+    write_evaluation_headline_status,
+)
 from cattle_weight.pipeline import run_reproduction_smoke
 from cattle_weight.reports.depth import write_depth_completion_summary
 from cattle_weight.validation import validate_headline
@@ -297,6 +313,24 @@ def test_depth_resume_accepts_only_trusted_depth_pro_rows(tmp_path: Path) -> Non
     assert is_trusted_depth_resume_row(row, cfg, {"B3:cow.jpg"}, "depth_pro")
     assert not is_trusted_depth_resume_row({**row, "depth_provider": "fallback_dummy_relative_depth"}, cfg, {"B3:cow.jpg"}, "depth_pro")
     assert not is_trusted_depth_resume_row({**row, "config_hash": "stale"}, cfg, {"B3:cow.jpg"}, "depth_pro")
+
+
+def test_segmentation_resume_accepts_stable_input_rows(tmp_path: Path) -> None:
+    cfg = smoke_config(tmp_path)
+    mask_path = tmp_path / "mask.png"
+    Image.new("L", (4, 4), 255).save(mask_path)
+    row = {
+        "image_id": "B3:cow.jpg",
+        "segmentation_status": "success",
+        "segmentation_source": PVT_SEGMENTATION_SOURCE,
+        "segmentation_algorithm_version": PVT_SEGMENTATION_ALGORITHM_VERSION,
+        "config_hash": "stale",
+        "reusable_by_stable_input_config": True,
+        "stable_input_config_hash": "stable-input-v1",
+        "mask_path": str(mask_path),
+    }
+    assert is_trusted_segmentation_resume_row(row, cfg, {"B3:cow.jpg"}, require_pvtv2=True)
+    assert not is_trusted_segmentation_resume_row({**row, "reusable_by_stable_input_config": False}, cfg, {"B3:cow.jpg"}, True)
 
 
 def test_depth_completion_summary_ignores_nan_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -600,6 +634,61 @@ def test_frozen_pvtv2_segmentation_writes_source_metadata(tmp_path: Path, monkey
     assert Path(artifacts["mask_path"].iloc[0]).exists()
 
 
+def test_segmentation_overwrite_reruns_trusted_resume_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = smoke_config(tmp_path)
+    cfg["segmentation"]["overwrite_existing"] = True
+    image_path = tmp_path / "normalized.jpg"
+    existing_mask_path = tmp_path / "existing_mask.png"
+    Image.new("RGB", (32, 24), (220, 220, 220)).save(image_path)
+    Image.new("L", (32, 24), 255).save(existing_mask_path)
+    sticker = pd.DataFrame(
+        [
+            {
+                "image_id": "B3:cow_001.jpg",
+                "dataset": "B3",
+                "data_version": "data-v1",
+                "detection_status": "success",
+                "normalized_width": 32,
+                "normalized_height": 24,
+                "normalized_image_path": str(image_path),
+                "normalized_mask_path": np.nan,
+                "transform_version": cfg["_config_hash"],
+            }
+        ]
+    )
+    write_parquet(sticker, tmp_path / "data_registry" / "sticker_metadata.parquet")
+    write_parquet(
+        pd.DataFrame(
+            [
+                {
+                    "image_id": "B3:cow_001.jpg",
+                    "dataset": "B3",
+                    "segmentation_status": "success",
+                    "segmentation_source": PVT_SEGMENTATION_SOURCE,
+                    "segmentation_algorithm_version": PVT_SEGMENTATION_ALGORITHM_VERSION,
+                    "config_hash": cfg["_config_hash"],
+                    "mask_path": str(existing_mask_path),
+                    "mask_area_px": 32 * 24,
+                }
+            ]
+        ),
+        tmp_path / "data_registry" / "cv_artifacts.parquet",
+    )
+    calls = {"count": 0}
+
+    def fake_predict(image_path: str | Path, config: dict) -> np.ndarray:
+        calls["count"] += 1
+        mask = np.zeros((24, 32), dtype=bool)
+        mask[4:12, 5:17] = True
+        return mask
+
+    monkeypatch.setattr("cattle_weight.cv.segmentation.predict_pvtv2_b2_mask", fake_predict)
+    artifacts = run_segmentation(cfg)
+    assert calls["count"] == 1
+    assert artifacts["mask_area_px"].iloc[0] == 96
+    assert artifacts["mask_path"].iloc[0] != str(existing_mask_path)
+
+
 def test_feature_gate_allows_baseline_but_keeps_downstream_checks(tmp_path: Path) -> None:
     cfg = smoke_config(tmp_path)
     cfg["segmentation"]["provider"] = "provided_mask_baseline"
@@ -709,6 +798,14 @@ def test_headline_readiness_accepts_frozen_pvtv2_without_training_report(tmp_pat
     write_parquet(cv, registry_dir(cfg) / "cv_artifacts.parquet")
     with pytest.raises(RuntimeError, match="frozen PVTv2-B2 saliency"):
         assert_headline_reproduction_ready(cfg)
+
+
+def test_training_split_version_requires_single_value() -> None:
+    train = pd.DataFrame({"split_version": ["split-v1", "split-v1"]})
+    assert training_split_version(train, "B3") == "split-v1"
+    mixed = pd.DataFrame({"split_version": ["split-v1", "split-v2"]})
+    with pytest.raises(RuntimeError, match="multiple split_version values"):
+        training_split_version(mixed, "B3")
 
 
 def test_coverage_funnel_counts_frozen_pvtv2_masks(tmp_path: Path) -> None:

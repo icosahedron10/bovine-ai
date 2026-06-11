@@ -68,6 +68,15 @@ def fit_nmi_selector(train: pd.DataFrame, threshold: float) -> tuple[list[str], 
     return selected, summary
 
 
+def training_split_version(train: pd.DataFrame, dataset: str) -> str | None:
+    if "split_version" not in train.columns:
+        return None
+    versions = sorted(str(value) for value in train["split_version"].dropna().unique())
+    if len(versions) > 1:
+        raise RuntimeError(f"Training rows for {dataset} contain multiple split_version values: {versions}")
+    return versions[0] if versions else None
+
+
 def discretize_for_nmi(values: np.ndarray, bins: int = 10) -> np.ndarray:
     series = pd.Series(values)
     unique = series.nunique(dropna=True)
@@ -113,7 +122,7 @@ def train_models(config: dict[str, Any]) -> dict[str, Any]:
         X_imp = imputer.fit_transform(X_train)
         X_scaled = scaler.fit_transform(X_imp)
         model = fit_lasso(config, X_scaled, y_train, seed)
-        split_version = train["split_version"].iloc[0] if "split_version" in train else None
+        split_version = training_split_version(train, dataset)
         bundle = {
             "train_dataset": dataset,
             "selected_features": selected,

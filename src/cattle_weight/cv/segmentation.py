@@ -12,6 +12,7 @@ from PIL import Image
 from scipy import ndimage
 from scipy.spatial import ConvexHull, QhullError
 
+from cattle_weight.artifact_trust import row_is_reusable_by_stable_input
 from cattle_weight.cv.pvtv2 import (
     PVT_SEGMENTATION_ALGORITHM_VERSION,
     PVT_SEGMENTATION_SOURCE,
@@ -40,7 +41,7 @@ def run_segmentation(config: dict[str, Any]) -> pd.DataFrame:
     overwrite_existing = bool(seg_cfg.get("overwrite_existing", False))
     require_pvtv2 = should_require_pvtv2_inference(config)
     existing_rows: dict[str, dict[str, Any]] = {}
-    if metadata_path.exists():
+    if metadata_path.exists() and not overwrite_existing:
         existing = read_parquet(metadata_path).drop_duplicates("image_id", keep="last")
         for item in existing.to_dict(orient="records"):
             image_id = str(item["image_id"])
@@ -210,7 +211,7 @@ def is_trusted_segmentation_resume_row(
         return False
     if row.get("segmentation_status") != "success":
         return False
-    if row.get("config_hash") != config.get("_config_hash"):
+    if row.get("config_hash") != config.get("_config_hash") and not row_is_reusable_by_stable_input(row):
         return False
     if require_pvtv2 and row.get("segmentation_source") != required_pvtv2_segmentation_source(config):
         return False
